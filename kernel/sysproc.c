@@ -75,6 +75,28 @@ int
 sys_pgaccess(void)
 {
   // lab pgtbl: your code here.
+  uint64 buf_addr, abits_addr;
+  int sz;
+  struct proc *p = myproc();
+  uint64 kabits;
+
+  argaddr(0, &buf_addr);
+  argint(1, &sz);
+  argaddr(2, &abits_addr);
+  if (sz > 32)
+    return -1;
+
+  kabits = 0;
+  for(int i = 0; i < sz; i++){
+    pte_t *pte = walk(p->pagetable, buf_addr + i * PGSIZE, 0);
+    if(*pte & PTE_A){
+      kabits = kabits | (1L << i);
+      *pte = *pte & (~PTE_A);
+    }
+  }
+
+  if(copyout(p->pagetable, abits_addr, (char *)&kabits, sizeof(kabits)) < 0)
+    return -1;
   return 0;
 }
 #endif
