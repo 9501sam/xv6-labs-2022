@@ -133,3 +133,17 @@ printfinit(void)
   initlock(&pr.lock, "pr");
   pr.locking = 1;
 }
+
+void
+backtrace(void)
+{
+  void *cur_frame;
+  void *bot;
+
+  cur_frame = (void *)r_fp();
+  bot = (void *) PGROUNDUP((uint64)cur_frame);
+  while (cur_frame < bot) {
+    printf("%p\n", *((void **)cur_frame - 1));
+    cur_frame = *((void **)cur_frame - 2);
+  }
+}
