@@ -316,14 +316,20 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
     if((*pte & PTE_V) == 0)
       panic("uvmcopy: page not present");
     pa = PTE2PA(*pte);
+    if (*pte & PTE_W) {
+      *pte &= ~PTE_W; // for copy on write: clear parent's PTE_W
+      *pte |= PTE_C; // for copy on write: set PTE_C
+    }
     flags = PTE_FLAGS(*pte);
-    if((mem = kalloc()) == 0)
-      goto err;
-    memmove(mem, (char*)pa, PGSIZE);
+    // if((mem = kalloc()) == 0)
+    //   goto err;
+    // memmove(mem, (char*)pa, PGSIZE);
+    mem = (char *) pa;
     if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
       kfree(mem);
       goto err;
     }
+    prefcnt_inc(pa);
   }
   return 0;
 
@@ -355,6 +361,10 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 
   while(len > 0){
     va0 = PGROUNDDOWN(dstva);
+    if (uncopied_cow(pagetable, va0)) {
+      if (cow_alloc(pagetable, va0) == -1)
+        return -1;
+    }
     pa0 = walkaddr(pagetable, va0);
     if(pa0 == 0)
       return -1;
@@ -436,4 +446,47 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
   } else {
     return -1;
   }
+}
+
+int
+uncopied_cow(pagetable_t pagetable, uint64 va)
+{
+  if (va >= MAXVA)
+    return 0;
+  pte_t *pte;
+  if ((pte = walk(pagetable, va, 0)) == 0)
+    return 0;
+  if ((*pte & PTE_V) == 0)
+    return 0;
+  if ((*pte & PTE_U) == 0)
+    return 0;
+  return (*pte & PTE_C);
+}
+
+// return -1 if cow_alloc() failed
+// return 0 if cow_alloc() success
+int
+cow_alloc(pagetable_t pagetable, uint64 va)
+{
+  pte_t *pte;
+  uint64 pa;
+  uint flags;
+  char *newpage;
+
+  va = PGROUNDDOWN(va);
+  if ((pte = walk(pagetable, va, 0)) == 0)
+    return -1;
+  pa = PTE2PA(*pte);
+  flags = PTE_FLAGS(*pte);
+  flags |= PTE_W;
+  flags &= ~PTE_C;
+  if ((newpage = kalloc()) == 0)
+    return -1;
+  memmove(newpage, (char *)pa, PGSIZE);
+  uvmunmap(pagetable, va, 1, 1);
+  if (mappages(pagetable, va, PGSIZE, (uint64)newpage, flags) != 0) {
+    kfree(newpage);
+    return -1;
+  }
+  return 0;
 }
